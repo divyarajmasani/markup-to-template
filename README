@@ -1,0 +1,219 @@
+# Gutenberg to InnerBlocks Converter
+
+A JavaScript tool for converting WordPress Gutenberg block markup (HTML with comments) into a template array that can be used with InnerBlocks.
+
+## Overview
+
+When developing custom block types in WordPress, you often need to create predefined block structures using InnerBlocks. This tool helps you convert existing Gutenberg markup into the JavaScript template array format needed for InnerBlocks.
+
+## Features
+
+- Parses Gutenberg HTML with comment delimiters
+- Extracts block names, attributes, and content
+- Handles nested blocks recursively
+- Correctly formats block names with appropriate namespaces
+- Converts attributes from JSON to JavaScript objects
+- Generates ready-to-use template arrays for InnerBlocks
+
+## Block Name Handling
+
+The parser intelligently handles block names to ensure compatibility with the InnerBlocks template format:
+
+- For core blocks without namespaces (e.g., `wp:paragraph`): Adds `core/` prefix
+  - Example: `wp:paragraph` → `core/paragraph`
+- For namespaced blocks (e.g., `wp:my-plugin/my-block`): Removes the `wp:` prefix
+  - Example: `wp:my-plugin/my-block` → `my-plugin/my-block`
+- For blocks already in the correct format: Leaves them unchanged
+
+## Usage
+
+### Node.js Environment
+
+```javascript
+const { parseGutenbergBlocks, formatTemplate, generateInnerBlocksTemplate } = require('./gutenberg-parser.js');
+
+// Your Gutenberg HTML markup
+const html = `
+<!-- wp:columns {"className":"my-columns"} -->
+<div class="wp-block-columns my-columns">
+    <!-- wp:column -->
+    <div class="wp-block-column">
+        <!-- wp:heading {"level":2} -->
+        <h2>Column 1 Heading</h2>
+        <!-- /wp:heading -->
+    </div>
+    <!-- /wp:column -->
+</div>
+<!-- /wp:columns -->
+`;
+
+// Generate the InnerBlocks template
+const template = generateInnerBlocksTemplate(html);
+console.log(template);
+```
+
+### Browser Environment
+
+```javascript
+// Include the script
+<script src="gutenberg-parser.js"></script>
+
+<script>
+  const html = document.getElementById('gutenberg-html').innerText;
+  const template = generateInnerBlocksTemplate(html);
+  console.log(template);
+</script>
+```
+
+### Using with InnerBlocks in Custom Block Development
+
+```jsx
+import { registerBlockType } from '@wordpress/blocks';
+import { InnerBlocks } from '@wordpress/block-editor';
+
+// Template generated from this tool
+const TEMPLATE = [
+  ['core/columns', {className: 'my-columns'}, [
+    ['core/column', {}, [
+      ['core/heading', {level: 2}, []]
+    ]]
+  ]]
+];
+
+registerBlockType('my-plugin/my-block', {
+  // ... other settings
+  edit: () => {
+    return (
+      <div className="my-custom-block">
+        <InnerBlocks
+          template={TEMPLATE}
+          templateLock="all"
+        />
+      </div>
+    );
+  },
+  save: () => {
+    return (
+      <div className="my-custom-block">
+        <InnerBlocks.Content />
+      </div>
+    );
+  }
+});
+```
+
+## API Reference
+
+### parseGutenbergBlocks(html)
+
+Parses Gutenberg block HTML and extracts block information.
+
+- **Parameters:**
+  - `html` (string): HTML string with Gutenberg block comments
+- **Returns:**
+  - Array of block templates for InnerBlocks
+
+### formatTemplate(template)
+
+Formats the template array into a readable JavaScript code string.
+
+- **Parameters:**
+  - `template` (Array): The template array
+- **Returns:**
+  - Formatted JavaScript code as a string
+
+### generateInnerBlocksTemplate(html)
+
+Processes Gutenberg HTML and generates InnerBlocks template code.
+
+- **Parameters:**
+  - `html` (string): Gutenberg HTML with comments
+- **Returns:**
+  - JavaScript code string for InnerBlocks template
+
+## Example
+
+### Input
+
+```html
+<!-- wp:columns {"className":"my-columns"} -->
+<div class="wp-block-columns my-columns">
+    <!-- wp:column -->
+    <div class="wp-block-column">
+        <!-- wp:heading {"level":2} -->
+        <h2>Column 1 Heading</h2>
+        <!-- /wp:heading -->
+
+        <!-- wp:paragraph -->
+        <p>This is some paragraph text.</p>
+        <!-- /wp:paragraph -->
+    </div>
+    <!-- /wp:column -->
+
+    <!-- wp:column -->
+    <div class="wp-block-column">
+        <!-- wp:my-plugin/custom-block {"setting":"value"} -->
+        <div class="custom-block">Custom content</div>
+        <!-- /wp:my-plugin/custom-block -->
+    </div>
+    <!-- /wp:column -->
+</div>
+<!-- /wp:columns -->
+```
+
+### Output
+
+```javascript
+// InnerBlocks Template
+const TEMPLATE = [
+  [
+    "core/columns",
+    {
+      className: "my-columns"
+    },
+    [
+      [
+        "core/column",
+        {},
+        [
+          [
+            "core/heading",
+            {
+              level: 2
+            },
+            []
+          ],
+          [
+            "core/paragraph",
+            {},
+            []
+          ]
+        ]
+      ],
+      [
+        "core/column",
+        {},
+        [
+          [
+            "my-plugin/custom-block",
+            {
+              setting: "value"
+            },
+            []
+          ]
+        ]
+      ]
+    ]
+  ]
+];
+
+// Usage example:
+// <InnerBlocks
+//   template={TEMPLATE}
+//   templateLock="all"
+// />
+```
+
+## License
+
+MIT
