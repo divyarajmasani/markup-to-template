@@ -1,55 +1,85 @@
 /**
- * Parse Gutenberg block HTML and extract block information
+ * Extract Gutenberg block comments and remove HTML markup
  * @param {string} html - HTML string with Gutenberg block comments
- * @return {Array} - Array of block templates for InnerBlocks
+ * @return {string} - Cleaned block comments
  */
-function parseGutenbergBlocks(html) {
-  // Regular expression to match Gutenberg block comments and their content
-  const blockRegex =
-    /<!-- wp:([^\s]+)(?:\s+({.*}))?\s+-->([\s\S]*?)<!-- \/wp:\1 -->/g;
+function extractBlockComments(html) {
+  // Match all Gutenberg block comments (opening and closing)
+  const blockCommentsRegex = /<!-- wp:.*?-->|<!-- \/wp:.*?-->/g;
+  const matches = html.match(blockCommentsRegex);
+
+  if (!matches) {
+    throw new Error("No Gutenberg blocks found in the input.");
+  }
+
+  // Join all matched comments into a single string
+  return matches.join("\n");
+}
+
+function parseBlockComments(comments) {
+  const blockStartRegex = /<!-- wp:([^\s]+)(?:\s+({.*}))?\s+-->/g;
   const blocks = [];
   let match;
 
-  while ((match = blockRegex.exec(html)) !== null) {
+  while ((match = blockStartRegex.exec(comments)) !== null) {
     const blockName = match[1];
     const blockAttributes = match[2] ? JSON.parse(match[2]) : {};
-    const blockContent = match[3].trim();
+    const startPosition = match.index;
 
-    // Check if this block has inner blocks
-    const innerBlocks = [];
-    if (blockContent) {
-      // Create a temporary div to hold the content
-      const tempDiv = document.createElement("div");
-      tempDiv.innerHTML = blockContent;
+    // Find the matching closing tag for this specific block
+    const endTag = `<!-- /wp:${blockName} -->`;
+    let nestingLevel = 1; // Start with 1 because we found an opening tag
+    let searchPosition = blockStartRegex.lastIndex;
+    let endPosition = -1;
 
-      // Count comment nodes that match block openings
-      const innerBlockComments = blockContent.match(/<!-- wp:[^\s]+/g);
+    while (nestingLevel > 0) {
+      const nextOpeningTag = comments.indexOf(`<!-- wp:${blockName}`, searchPosition);
+      const nextClosingTag = comments.indexOf(endTag, searchPosition);
 
-      if (innerBlockComments && innerBlockComments.length > 0) {
-        // Recursively parse inner blocks
-        const parsedInnerBlocks = parseGutenbergBlocks(blockContent);
-        innerBlocks.push(...parsedInnerBlocks);
+      if (nextClosingTag === -1) {
+        throw new Error(`Missing closing tag for block: ${blockName}`);
+      }
+
+      if (nextOpeningTag !== -1 && nextOpeningTag < nextClosingTag) {
+        // Found another opening tag before the closing tag
+        nestingLevel++;
+        searchPosition = nextOpeningTag + 1;
+      } else {
+        // Found a closing tag
+        nestingLevel--;
+        searchPosition = nextClosingTag + endTag.length;
+
+        if (nestingLevel === 0) {
+          endPosition = nextClosingTag;
+        }
       }
     }
 
-    // Format the block name - handle namespaced blocks correctly
-    let formattedBlockName = blockName;
+    // Extract the block content between the opening and closing tags
+    const blockContent = comments.substring(blockStartRegex.lastIndex, endPosition).trim();
 
-    // If the block name starts with 'wp:' but doesn't contain a namespace (no slash)
-    if (blockName.startsWith("wp:") && !blockName.includes("/")) {
-      formattedBlockName = `core/${blockName.substring(3)}`;
-    }
-    // If the block name starts with 'wp:' and has a namespace (contains slash)
-    else if (blockName.startsWith("wp:")) {
-      formattedBlockName = blockName.substring(3);
-    }
-
-    // Add this block to the template
-    blocks.push([
-      formattedBlockName,
+    // Create the block object
+    const block = [
+      blockName.includes("/") ? blockName : `core/${blockName}`,
       blockAttributes,
-      innerBlocks.length > 0 ? innerBlocks : [],
-    ]);
+    ];
+
+    // If there's content, parse inner blocks recursively
+    if (blockContent) {
+      const innerBlocks = parseBlockComments(blockContent);
+      block.push( innerBlocks );
+    }
+
+    // If there's no content, set innerBlocks to null
+    if (!blockContent) {
+      block.push([]);
+    }
+
+    // Add this block to the list of blocks
+    blocks.push(block);
+
+    // Move the regex index to after the closing tag
+    blockStartRegex.lastIndex = endPosition + endTag.length;
   }
 
   return blocks;
@@ -61,13 +91,18 @@ function parseGutenbergBlocks(html) {
  * @return {string} - Formatted JavaScript code
  */
 function formatTemplate(template) {
-  return (
-    JSON.stringify(template, null, 2)
-      // Replace null with [] for empty innerBlocks
-      .replace(/: null/g, ": []")
-      // Make it more readable as JavaScript code
-      .replace(/"([^"]+)":/g, "$1:")
-  );
+  // First, stringify the template with indentation
+  let jsonString = JSON.stringify(template, null, 2);
+
+  // Replace null with [] for empty innerBlocks
+  jsonString = jsonString.replace(/: null/g, ": []");
+
+  // Only remove quotes from property keys in objects, not from block names in arrays
+  // This regex looks for property keys (followed by :) and removes their quotes
+  jsonString = jsonString.replace(/"([^"]+)":/g, "$1:");
+
+  // Preserve quoted strings in arrays (the block names)
+  return jsonString;
 }
 
 /**
@@ -77,51 +112,29 @@ function formatTemplate(template) {
  */
 function generateInnerBlocksTemplate(html) {
   try {
-    const blocks = parseGutenbergBlocks(html);
+    // Step 1: Extract Gutenberg block comments
+    const comments = extractBlockComments(html);
+
+    // Step 2: Parse the block comments into a template
+    const blocks = parseBlockComments(comments);
+
+    // Step 3: Format the template into readable JavaScript code
     const formattedTemplate = formatTemplate(blocks);
 
     return `// InnerBlocks Template
-                const TEMPLATE = ${formattedTemplate};
+const TEMPLATE = ${formattedTemplate};
 
-                // Usage example:
-                // <InnerBlocks
-                //   template={TEMPLATE}
-                //   templateLock="all"
-                // />`;
+// Usage example:
+// <InnerBlocks
+//   template={TEMPLATE}
+//   templateLock="all"
+// />`;
   } catch (error) {
     return `Error generating template: ${error.message}`;
   }
 }
 
-// Example Gutenberg HTML for the textarea placeholder
-const exampleHtml = `<!-- wp:columns {"className":"my-columns"} -->
-                      <div class="wp-block-columns my-columns">
-                          <!-- wp:column -->
-                          <div class="wp-block-column">
-                              <!-- wp:heading {"level":2} -->
-                              <h2>Column 1 Heading</h2>
-                              <!-- /wp:heading -->
-
-                              <!-- wp:paragraph -->
-                              <p>This is some paragraph text in the first column.</p>
-                              <!-- /wp:paragraph -->
-                          </div>
-                          <!-- /wp:column -->
-
-                          <!-- wp:column -->
-                          <div class="wp-block-column">
-                              <!-- wp:image {"id":123,"sizeSlug":"large"} -->
-                              <figure class="wp-block-image size-large">
-                                  <img src="example.jpg" alt="Example" class="wp-image-123"/>
-                              </figure>
-                              <!-- /wp:image -->
-                          </div>
-                          <!-- /wp:column -->
-                      </div>
-                      <!-- /wp:columns -->`;
-
 // Set up the event listener for the convert button
-document.getElementById("input").placeholder = exampleHtml;
 document.getElementById("convert").addEventListener("click", function () {
   const input = document.getElementById("input").value;
   if (!input) {
